@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#173f39"><title>词间 · 考研英语1849词</title><link rel="stylesheet" href="styles.css"><script defer src="data.js"></script><script defer src="app.js"></script></head>
+<body>
+<div class="shell">
+<aside class="sidebar">
+<a class="brand" href="#" aria-label="词间首页"><span class="brand-icon">词</span><span>词间<small>KAOYAN WORDS</small></span></a>
+<div class="sidebar-label">你的词汇空间</div>
+<nav aria-label="学习模式">
+<button class="nav-item active" data-mode="study"><span>▣</span> 词卡学习 <i>01</i></button>
+<button class="nav-item" data-mode="library"><span>▤</span> 全部词库 <i>02</i></button>
+<button class="nav-item" data-mode="quiz"><span>◇</span> 释义自测 <i>03</i></button>
+<button class="nav-item" data-mode="saved"><span>☆</span> 我的收藏 <i>04</i></button>
+</nav>
+<div class="side-progress"><span>不是一口气背完，<br>而是每天多记一点。</span><div class="mini-track"><div id="sideProgressBar"></div></div><div class="progress-caption"><b id="sideMastered">0</b> / 1849 词已掌握</div></div>
+<div class="side-footer"><span class="local-dot"></span> 本地保存 · 无需登录 <button id="helpButton" class="text-button">使用说明 ↗</button></div>
+</aside>
+<main>
+<header class="topbar"><span>考研英语 / 核心词汇</span><div><button class="icon-button" id="topHelpButton" title="使用说明" aria-label="使用说明">?</button><button class="icon-button" id="exportButton" title="导出学习进度" aria-label="导出学习进度">↓</button><button class="icon-button" id="importButton" title="导入学习进度" aria-label="导入学习进度">↑</button><span class="avatar">研</span></div></header>
+<section class="welcome"><div><div class="eyebrow"><span></span> YOUR DAILY WORD PRACTICE</div><h1>在词与词之间，<br>读懂更大的世界<span>。</span></h1><p>释义、记忆线索、短搭配。让每一个单词，都有一个落点。</p></div><div class="edition"><span>完整词表</span><strong>1,849<small>WORDS</small></strong><span>93 组 · 每组约 20 词</span></div></section>
+<section class="stats" aria-label="学习进度"><div class="stat"><span>已掌握</span><strong id="masteredStat">0</strong><small>从记住，到读懂</small></div><div class="stat"><span>待复习</span><strong id="reviewStat">0</strong><small>再给它一次机会</small></div><div class="stat"><span>今日学习</span><strong id="todayStat">0</strong><small>每一次回想都算数</small></div><div class="stat goal-stat"><div class="goal-circle" id="goalCircle"><b id="goalCount">0</b><small>/ 20</small></div><div><span>每日小目标</span><small>20 词，慢慢积累</small></div></div></section>
+<section class="workspace">
+<div class="workspace-head"><div><span class="section-kicker">LEARNING DESK</span><h2 id="modeTitle">今日词卡</h2></div><div class="view-switch"><button class="selected" data-mode="study">词卡</button><button data-mode="library">词库</button><button data-mode="quiz">自测</button></div></div>
+<div class="filters"><label class="search-box"><span>⌕</span><input id="searchInput" type="search" placeholder="搜索单词、释义或搭配" aria-label="搜索单词、释义或搭配"><kbd>/</kbd></label><select id="groupFilter" aria-label="选择单词组"><option value="all">全部 93 组</option></select><select id="statusFilter" aria-label="筛选学习状态"><option value="all">全部状态</option><option value="new">未学习</option><option value="review">待复习</option><option value="mastered">已掌握</option><option value="saved">已收藏</option></select><button id="shuffleButton" class="secondary-button">⇄ 随机顺序</button></div>
+<div class="session-row"><span id="resultInfo">1849 个单词</span><div><label class="toggle"><input type="checkbox" id="hideMeanings"><span></span>先回想，再揭晓</label></div></div>
+<div id="studyPanel" class="study-layout"><article class="flashcard" id="flashcard" aria-live="polite"></article><aside class="study-guide"><div class="guide-header"><span>↗</span><span>把认识，变成记住</span></div><ol><li><b>看英文，说意思</b><p>先停 3 秒，尝试主动回想。</p></li><li><b>借一个记忆线索</b><p>词族、画面或短搭配，不硬编谐音。</p></li><li><b>把单词放回语境</b><p>读一遍短搭配，连同中文一起记。</p></li></ol><div class="guide-note">记忆联想 ≠ 真实词源<br>不熟悉的词，放入“待复习”再见一次。</div><div class="keys"><span><kbd>←</kbd><kbd>→</kbd>切换</span><span><kbd>空格</kbd>揭晓</span></div></aside></div>
+<div id="libraryPanel" hidden><div id="wordGrid" class="word-grid"></div><div class="pagination"><button id="prevPage" class="secondary-button">← 上一页</button><span id="pageInfo"></span><button id="nextPage" class="secondary-button">下一页 →</button></div></div>
+<div id="quizPanel" hidden><article id="quizCard" class="quiz-card" aria-live="polite"></article></div>
+<div id="emptyPanel" class="empty-state" hidden><span>◇</span><h3>这里还没有单词</h3><p id="emptyText">试试换一组词，或者清除筛选条件。</p><button id="clearFilters" class="primary-button">查看全部词汇</button></div>
+</section>
+<footer class="main-footer"><span>词间 · 让单词有迹可循</span><span>完整词表 1849 词 · 释义与搭配为学习参考</span></footer>
+</main>
+</div>
+<div id="toast" class="toast" role="status"></div><input type="file" id="importFile" accept="application/json,.json" hidden>
+<dialog id="helpDialog"><button id="closeHelp" class="dialog-close" aria-label="关闭说明">×</button><span class="section-kicker">ABOUT THIS NOTEBOOK</span><h2>你的离线单词手账</h2><p>这份词库保留了扇贝“在学单词”的原始顺序，共1849词。20词一组，最后一组9词。</p><h3>怎样开始？</h3><p>选择第01组，开启“先回想，再揭晓”。先说中文，再看记忆提示和搭配。熟悉的标为“已掌握”，不稳的标为“待复习”。自测中只答一道中文选择题，答对不会自动判为掌握。</p><h3>数据保存在哪里？</h3><p>收藏、状态和今日学习保存在此浏览器的本地存储里。浏览器或网址改变后不一定共享；清理浏览器数据会丢失。请用右上角向下箭头导出备份，用向上箭头导入。网站不会上传你的学习记录。</p><h3>内容说明</h3><p>每词提供精简常用义，而非全部义项。记忆方法以短搭配、词族和人为画面联想为主，并非对所有人都最有效；联想不是词源。搭配与记忆提示为本词库编写。扩展释义参考 ECDICT（MIT），为保持版面简洁，词卡不展示词典旧式音标。发音采用浏览器语音，是否可用取决于设备。</p><p class="dialog-muted">记忆线索含686条画面或易混提示、265条词族或对比提示，其余898词用独立短搭配作记忆锚，不硬编拆词。优先主动回想，而不只是反复看。同一个词在考研阅读中仍需结合上下文判断。</p></dialog>
+</body></html>
