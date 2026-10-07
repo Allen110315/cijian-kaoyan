@@ -27,7 +27,7 @@
     if (Number.isInteger(goal) && goal >= 1 && goal <= words.length) clean.settings.goal = goal;
     const session = value.session;
     if (session && typeof session === 'object') {
-      if (['study','library','quiz','saved'].includes(session.mode)) clean.session.mode = session.mode;
+      if (['study','library','quiz','recall','saved'].includes(session.mode)) clean.session.mode = session.mode;
       if (typeof session.query === 'string') clean.session.query = session.query.slice(0,200);
       if (session.group === 'all' || /^([1-9]|[1-8][0-9]|9[0-3])$/.test(String(session.group))) clean.session.group = String(session.group);
       if (['all','new','review','mastered','saved'].includes(session.status)) clean.session.status = session.status;
@@ -40,6 +40,7 @@
   let mode = 'study', index = Math.max(0, words.findIndex(w => w.id === store.lastId)), libraryPage = 1;
   let order = words.map(w => w.id), filtered = words.slice(), revealed = !store.settings.hide, quiz = null;
   let quizStats = {answered:0,correct:0}, toastTimer;
+  let recall=null, recallStats={answered:0,correct:0};
   const statusNames = {new:'未学习',review:'待复习',mastered:'已掌握'};
   const record = id => store.records[id] || {status:'new',saved:false};
   function toast(text) { $('toast').textContent = text; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'),2800); }
@@ -75,20 +76,22 @@
     }).sort((a,b)=>rank.get(a.id)-rank.get(b.id));
     index=keepId ? filtered.findIndex(w=>w.id===keepId) : 0;
     if (index<0 || index>=filtered.length) index=0;
-    libraryPage=1; revealed=!store.settings.hide; quiz=null; render();
+    libraryPage=1; revealed=!store.settings.hide; quiz=null; recall=null; render();
   }
   function setMode(next,keepId) {
+    if (next==='recall' && mode!=='recall') recallStats={answered:0,correct:0};
     mode=next; document.querySelectorAll('[data-mode]').forEach(b=>{const active=b.dataset.mode===mode;b.classList.toggle(b.classList.contains('nav-item')?'active':'selected',active);b.setAttribute('aria-pressed',String(active));});
-    $('modeTitle').textContent=({study:'今日词卡',library:'全部词库',quiz:'释义自测',saved:'我的收藏'})[mode];
+    $('modeTitle').textContent=({study:'今日词卡',library:'全部词库',quiz:'释义自测',recall:'默写自测',saved:'我的收藏'})[mode];
     recompute(keepId);
   }
   function render() {
     renderStats(); const empty=filtered.length===0;
     $('studyPanel').hidden=empty || mode!=='study'; $('libraryPanel').hidden=empty || !['library','saved'].includes(mode); $('quizPanel').hidden=empty || mode!=='quiz'; $('emptyPanel').hidden=!empty;
+    $('recallPanel').hidden=empty || mode!=='recall';
     $('resultInfo').textContent=filtered.length+' 个单词'+($('groupFilter').value==='all'?'':' · 第 '+$('groupFilter').value+' 组');
     $('emptyText').textContent=mode==='saved'?'点击词卡上的星星，把容易忘的单词收在这里。':'试试换一组词，或者清除筛选条件。';
     if(empty) { rememberSession(); return; }
-    if(mode==='study') renderStudy(); else if(mode==='quiz') renderQuiz(); else renderLibrary();
+    if(mode==='study') renderStudy(); else if(mode==='quiz') renderQuiz(); else if(mode==='recall') renderRecall(); else renderLibrary();
   }
   function star(w) {const r=record(w.id);return '<button class="star-button '+(r.saved?'saved':'')+'" data-save="'+w.id+'" aria-label="'+(r.saved?'取消收藏':'收藏')+' '+escape(w.word)+'" aria-pressed="'+r.saved+'">'+(r.saved?'★':'☆')+'</button>';}
   function phraseHTML(w) { return '<div class="phrase-box"><div class="block-label">↗ 短搭配</div><div class="phrase-text"><strong>'+escape(w.phrase)+'</strong><span>'+escape(w.phraseZh)+'</span></div></div>'; }
@@ -125,6 +128,23 @@
     $('quizCard').innerHTML='<div class="quiz-top"><span>第 '+(index+1)+' / '+filtered.length+' 词 · '+statusNames[r.status]+'</span><span>本轮 '+quizStats.correct+' / '+quizStats.answered+' 正确</span></div><div class="quiz-word"><h3>'+escape(w.word)+'</h3><p>选择这个单词的正确释义</p><button class="speak-button" data-speak="'+w.id+'" aria-label="朗读 '+escape(w.word)+'">♪</button></div><div class="quiz-options">'+options+'</div>'+feedback+'<div class="quiz-bottom"><span>快捷键 A / B / C / D 选答案</span><button class="primary-button" id="nextQuiz" '+(!quiz.answered?'disabled':'')+'>'+(index===filtered.length-1?'再测一轮 ↻':'下一个词 →')+'</button></div>';
   }
   function move(delta) { if(!filtered.length)return;index=Math.max(0,Math.min(filtered.length-1,index+delta));revealed=!store.settings.hide;quiz=null;store.lastId=filtered[index].id;persist();render(); }
+  function renderRecall() {
+    rememberSession();
+    const w=filtered[index];
+    if (!recall || recall.wordId!==w.id) recall={wordId:w.id,answer:'',submitted:false,graded:false};
+    const feedback=recall.submitted ? `<div class='quiz-feedback'><h4>对照参考释义</h4><p class='recall-answer'><b>你的回答：</b>${escape(recall.answer)}</p><p><b>参考释义：</b>${escape(w.meaning)}</p>${memoryHTML(w)}${phraseHTML(w)}<p>中文表达可以不同，请按意思自行判断。基本正确不会自动标为已掌握。</p><div class='recall-grading'><button class='status-button mastered' data-recall-grade='correct' ${recall.graded?'disabled':''}>✓ 基本正确</button><button class='status-button review' data-recall-grade='review' ${recall.graded?'disabled':''}>↻ 需要复习</button></div>${recall.graded?`<p role='status'>${recall.grade==='correct'?'已记录：基本正确（自行判断）':'已加入待复习'}</p>`:''}</div>` : '';
+    $('recallCard').innerHTML=`<div class='quiz-top'><span>第 ${index+1} / ${filtered.length} 词 · ${statusNames[record(w.id).status]}</span><span>本轮自行判断 ${recallStats.correct} / ${recallStats.answered} 基本正确</span></div><div class='quiz-word'><h3>${escape(w.word)}</h3><p>不看提示，打出这个单词的中文意思</p><button class='speak-button' data-speak='${w.id}' aria-label='朗读 ${escape(w.word)}'>♪</button></div><form id='recallForm'><label class='recall-label' for='recallAnswer'>你的中文释义</label><textarea id='recallAnswer' rows='3' maxlength='500' placeholder='输入你记得的中文意思…' aria-describedby='recallHint' ${recall.submitted?'readonly':''}>${escape(recall.answer)}</textarea><p id='recallHint' class='recall-hint'>先输入，再查看参考释义。可写常用意思，不要求逐字一致；最多500字。Ctrl / ⌘ + Enter 提交。</p><button class='primary-button' type='submit' ${recall.submitted?'disabled':''}>提交并对照释义</button></form>${feedback}<div class='quiz-bottom'><span>对照后请先判断本题，再继续</span><button class='primary-button' id='nextRecall' ${!recall.graded?'disabled':''}>${index===filtered.length-1?'再测一轮 ↻':'下一个词 →'}</button></div>`;
+  }
+  function submitRecall() {
+    if (mode!=='recall' || !recall || recall.submitted) return;
+    const answer=$('recallAnswer').value.trim();
+    if (!answer) { toast('请先输入中文意思，再提交。'); $('recallAnswer').focus(); return; }
+    recall.answer=answer.slice(0,500); recall.submitted=true;
+    logStudy(recall.wordId); renderRecall();
+  }
+  document.addEventListener('submit',event=>{if(event.target.id==='recallForm'){event.preventDefault();submitRecall();}});
+  document.addEventListener('input',event=>{if(event.target.id==='recallAnswer' && recall && !recall.submitted) recall.answer=event.target.value.slice(0,500);});
+  document.addEventListener('keydown',event=>{if(event.target.id==='recallAnswer' && !event.isComposing && event.key==='Enter' && (event.ctrlKey||event.metaKey)){event.preventDefault();submitRecall();}});
   function setStatus(id,status,isQuiz=false) {
     if(!['new','review','mastered'].includes(status))return;
     store.records[id]={...record(id),status,updated:new Date().toISOString()};
@@ -155,6 +175,11 @@
     store.settings.goal=goal; persist(); renderStats(); toast('每日目标已设为 '+goal+' 词。');
   }
   $('dailyGoal').addEventListener('change',saveGoal);
+  $('reviewRecallButton').addEventListener('click',()=>{
+    $('searchInput').value=''; $('groupFilter').value='all'; $('statusFilter').value='review';
+    recallStats={answered:0,correct:0}; setMode('recall');
+    if (!filtered.length) toast('还没有待复习单词，可以先在词卡中标记。');
+  });
   $('saveGoalButton').addEventListener('click',saveGoal);
   $('dailyGoal').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();saveGoal();}});
   $('hideMeanings').checked=store.settings.hide;
@@ -174,6 +199,18 @@
     if(button.id==='nextWord')move(1);
     if(button.dataset.option!==undefined&&quiz&&!quiz.answered){quiz.choice=Number(button.dataset.option);quiz.answered=true;quizStats.answered++;const correct=quiz.options[quiz.choice].id===quiz.wordId;if(correct)quizStats.correct++;else{store.records[quiz.wordId]={...record(quiz.wordId),status:'review',updated:new Date().toISOString()};}logStudy(quiz.wordId);persist();renderQuiz();}
     if(button.id==='nextQuiz'){index=index===filtered.length-1?0:index+1;quiz=null;renderQuiz();}
+    if(button.dataset.recallGrade && mode==='recall' && recall?.submitted && !recall.graded){
+      const grade=button.dataset.recallGrade;
+      if (!['correct','review'].includes(grade)) return;
+      recall.graded=true; recall.grade=grade; recallStats.answered++;
+      if (grade==='correct') recallStats.correct++;
+      else { store.records[recall.wordId]={...record(recall.wordId),status:'review',updated:new Date().toISOString()}; persist(); renderStats(); }
+      renderRecall();
+    }
+    if(button.id==='nextRecall' && mode==='recall' && recall?.graded){
+      const nextId=filtered[(index+1)%filtered.length]?.id;
+      recompute(nextId);
+    }
   });
   document.addEventListener('keydown',event=>{
     if(event.target.closest('input,select,textarea,button,a,summary')||$('helpDialog').open)return;
@@ -192,7 +229,7 @@
   $('importButton').addEventListener('click',()=>$('importFile').click());
   $('importFile').addEventListener('change',async()=>{
     const file=$('importFile').files[0];if(!file)return;
-    try { if(file.size>5*1024*1024)throw Error('备份文件过大');const incoming=validate(JSON.parse(await file.text()));if(!window.confirm('导入将替换当前学习进度。建议先导出备份，是否继续？'))return;store=incoming;quizStats={answered:0,correct:0};restoreSession();toast('进度已恢复。'); }catch(error){toast('无法导入：'+error.message);}finally{$('importFile').value='';}
+    try { if(file.size>5*1024*1024)throw Error('备份文件过大');const incoming=validate(JSON.parse(await file.text()));if(!window.confirm('导入将替换当前学习进度。建议先导出备份，是否继续？'))return;store=incoming;quizStats={answered:0,correct:0};recallStats={answered:0,correct:0};restoreSession();toast('进度已恢复。'); }catch(error){toast('无法导入：'+error.message);}finally{$('importFile').value='';}
   });
   restoreSession();
   if(!storageAvailable)toast('本地存储不可用，请用导出备份保留进度。');
