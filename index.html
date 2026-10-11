@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#173f39"><title>词间 · 考研英语1849词</title><link rel="stylesheet" href="styles.css?v=20261007-recall"><script defer src="data.js"></script><script defer src="app.js?v=20261007-recall"></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#173f39"><title>词间 · 考研英语1849词</title><link rel="stylesheet" href="styles.css?v=20261011-mobile"><script defer src="data.js"></script><script defer src="app.js?v=20261011-mobile"></script></head>
 <body>
 <div class="shell">
 <aside class="sidebar">
@@ -33,6 +33,11 @@
 <footer class="main-footer"><span>词间 · 让单词有迹可循</span><span>完整词表 1849 词 · 释义与搭配为学习参考</span></footer>
 </main>
 </div>
+<section id="quizDock" class="quiz-dock" aria-label="手机自测操作栏" hidden>
+<p id="dockFeedback" role="status" aria-live="polite"></p>
+<div id="dockGrade" class="dock-grade" hidden><button class="status-button mastered" data-recall-grade="correct" aria-label="默写自评：基本正确">✓ 基本正确</button><button class="status-button review" data-recall-grade="review" aria-label="默写自评：需要复习">↻ 需要复习</button></div>
+<button id="mobileNext" class="primary-button" disabled>下一个词 →</button>
+</section>
 <div id="toast" class="toast" role="status"></div><input type="file" id="importFile" accept="application/json,.json" hidden>
 <dialog id="helpDialog"><button id="closeHelp" class="dialog-close" aria-label="关闭说明">×</button><span class="section-kicker">ABOUT THIS NOTEBOOK</span><h2>你的离线单词手账</h2><p>这份词库保留了扇贝“在学单词”的原始顺序，共1849词。20词一组，最后一组9词。</p><h3>怎样开始？</h3><p>选择第01组，开启“先回想，再揭晓”。先说中文，再看记忆提示和搭配。熟悉的标为“已掌握”，不稳的标为“待复习”。自测中只答一道中文选择题，答对不会自动判为掌握。</p><h3>默写自测怎么用？</h3><p>看英文，输入中文意思，再提交对照参考释义。中文表达不要求逐字一致，请自行判断“基本正确”或“需要复习”。需要复习会加入待复习列表；基本正确不会自动标为掌握。输入内容和本轮计数仅保留在当前页面，不上传，刷新后重做当前题。</p><h3>数据保存在哪里？</h3><p>收藏、状态和今日学习保存在此浏览器的本地存储里。浏览器或网址改变后不一定共享；清理浏览器数据会丢失。请用右上角向下箭头导出备份，用向上箭头导入。网站不会上传你的学习记录。</p><h3>内容说明</h3><p>每词提供精简常用义，而非全部义项。记忆方法以短搭配、词族和人为画面联想为主，并非对所有人都最有效；联想不是词源。搭配与记忆提示为本词库编写。扩展释义参考 ECDICT（MIT），为保持版面简洁，词卡不展示词典旧式音标。发音采用浏览器语音，是否可用取决于设备。</p><p class="dialog-muted">记忆线索含686条画面或易混提示、265条词族或对比提示，其余898词用独立短搭配作记忆锚，不硬编拆词。优先主动回想，而不只是反复看。同一个词在考研阅读中仍需结合上下文判断。</p></dialog>
 </body></html>

@@ -41,6 +41,51 @@
   let order = words.map(w => w.id), filtered = words.slice(), revealed = !store.settings.hide, quiz = null;
   let quizStats = {answered:0,correct:0}, toastTimer;
   let recall=null, recallStats={answered:0,correct:0};
+  const mobileQuiz = window.matchMedia('(max-width:650px), (max-height:500px) and (max-width:950px)');
+  let dockFrame;
+  function measureDock() {
+    const dock=$('quizDock'), viewport=window.visualViewport;
+    const offset=viewport && Math.abs(viewport.scale-1)<.05 ? Math.max(0,window.innerHeight-viewport.height-viewport.offsetTop) : 0;
+    document.documentElement.style.setProperty('--quiz-dock-offset',offset+'px');
+    document.documentElement.style.setProperty('--quiz-dock-space',dock.hidden ? '0px' : (Math.ceil(dock.getBoundingClientRect().height)+offset+16)+'px');
+  }
+  function syncDock() {
+    const dock=$('quizDock'), editing=document.activeElement?.matches('input,textarea,select');
+    const active=mobileQuiz.matches && filtered.length && ['quiz','recall'].includes(mode) && !$('helpDialog').open && !editing;
+    dock.hidden=!active || (mode==='recall' && !recall?.submitted);
+    document.body.classList.toggle('quiz-docked',!dock.hidden);
+    if (dock.hidden) { measureDock(); return; }
+    const isQuiz=mode==='quiz', answered=isQuiz ? quiz?.answered : recall?.graded;
+    const w=filtered[index];
+    $('dockFeedback').textContent=isQuiz ? (quiz?.answered ? (quiz.options[quiz.choice].id===w.id ? '✓ 回想正确' : '↻ 答错了，已加入待复习')+' · '+w.meaning : '先选择一个答案') : (recall.graded ? (recall.grade==='correct' ? '✓ 基本正确（自行判断）' : '↻ 已加入待复习') : '参考释义：'+w.meaning);
+    $('dockGrade').hidden=isQuiz || recall.graded;
+    $('mobileNext').disabled=!answered;
+    $('mobileNext').textContent=index===filtered.length-1 ? '再测一轮 ↻' : '下一个词 →';
+    measureDock();
+  }
+  function queueDock() { cancelAnimationFrame(dockFrame); dockFrame=requestAnimationFrame(syncDock); }
+  function positionQuestion() {
+    if (!mobileQuiz.matches || !filtered.length || !['quiz','recall'].includes(mode)) return;
+    requestAnimationFrame(()=>{
+      if (!mobileQuiz.matches || !filtered.length || !['quiz','recall'].includes(mode)) return;
+      const card=$(mode==='quiz'?'quizCard':'recallCard');
+      card.scrollIntoView({block:'start',behavior:'instant'});
+    });
+  }
+  function nextQuestion() {
+    if (!filtered.length) return;
+    if (mode==='quiz' && quiz?.answered) { index=index===filtered.length-1?0:index+1; quiz=null; renderQuiz(); positionQuestion(); }
+    else if (mode==='recall' && recall?.graded) { const nextId=filtered[(index+1)%filtered.length]?.id; recompute(nextId); positionQuestion(); }
+  }
+  document.addEventListener('focusin',syncDock);
+  document.addEventListener('focusout',queueDock);
+  window.addEventListener('resize',queueDock);
+  window.visualViewport?.addEventListener('resize',queueDock);
+  window.visualViewport?.addEventListener('scroll',queueDock);
+  if (mobileQuiz.addEventListener) mobileQuiz.addEventListener('change',queueDock);
+  else mobileQuiz.addListener(queueDock);
+  if ('ResizeObserver' in window) new ResizeObserver(measureDock).observe($('quizDock'));
+  $('helpDialog').addEventListener('close',queueDock);
   const statusNames = {new:'未学习',review:'待复习',mastered:'已掌握'};
   const record = id => store.records[id] || {status:'new',saved:false};
   function toast(text) { $('toast').textContent = text; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'),2800); }
@@ -90,12 +135,14 @@
     $('recallPanel').hidden=empty || mode!=='recall';
     $('resultInfo').textContent=filtered.length+' 个单词'+($('groupFilter').value==='all'?'':' · 第 '+$('groupFilter').value+' 组');
     $('emptyText').textContent=mode==='saved'?'点击词卡上的星星，把容易忘的单词收在这里。':'试试换一组词，或者清除筛选条件。';
-    if(empty) { rememberSession(); return; }
+    if(empty) { rememberSession(); syncDock(); return; }
     if(mode==='study') renderStudy(); else if(mode==='quiz') renderQuiz(); else if(mode==='recall') renderRecall(); else renderLibrary();
+    syncDock();
   }
   function star(w) {const r=record(w.id);return '<button class="star-button '+(r.saved?'saved':'')+'" data-save="'+w.id+'" aria-label="'+(r.saved?'取消收藏':'收藏')+' '+escape(w.word)+'" aria-pressed="'+r.saved+'">'+(r.saved?'★':'☆')+'</button>';}
   function phraseHTML(w) { return '<div class="phrase-box"><div class="block-label">↗ 短搭配</div><div class="phrase-text"><strong>'+escape(w.phrase)+'</strong><span>'+escape(w.phraseZh)+'</span></div></div>'; }
   function memoryHTML(w) {return '<div class="memory-box"><div class="block-label">✦ 记忆线索 <span class="cue-type">'+escape(w.type)+'</span></div><p>'+escape(w.memory)+'</p></div>';}
+  function analysisHTML(w) { return '<details class="quiz-analysis"><summary>查看记忆提示与搭配</summary>'+memoryHTML(w)+phraseHTML(w)+'</details>'; }
   function renderStudy() {
     rememberSession();
     const w=filtered[index],r=record(w.id); store.lastId=w.id;
@@ -124,22 +171,25 @@
     rememberSession();
     if(!quiz) newQuiz();const w=words.find(w=>w.id===quiz.wordId),r=record(w.id);
     const options=quiz.options.map((o,i)=>{let cls='';if(quiz.answered){if(o.id===w.id)cls=' correct';else if(i===quiz.choice)cls=' wrong';}return '<button class="quiz-option'+cls+'" data-option="'+i+'" '+(quiz.answered?'disabled':'')+'><span>'+String.fromCharCode(65+i)+'</span><span>'+escape(o.meaning)+'</span></button>';}).join('');
-    const feedback=quiz.answered?'<div class="quiz-feedback"><h4>'+(quiz.options[quiz.choice].id===w.id?'✓ 回想正确':'再看一遍，它会更牢')+'</h4><p>正确释义：'+escape(w.meaning)+'</p>'+memoryHTML(w)+phraseHTML(w)+'<button class="status-button review" data-quiz-status="review">↻ 加入待复习</button> <button class="status-button mastered" data-quiz-status="mastered">✓ 标为已掌握</button></div>':'';
+    const feedback=quiz.answered?'<div class="quiz-feedback"><h4>'+(quiz.options[quiz.choice].id===w.id?'✓ 回想正确':'再看一遍，它会更牢')+'</h4><p>正确释义：'+escape(w.meaning)+'</p>'+analysisHTML(w)+'<button class="status-button review" data-quiz-status="review">↻ 加入待复习</button> <button class="status-button mastered" data-quiz-status="mastered">✓ 标为已掌握</button></div>':'';
     $('quizCard').innerHTML='<div class="quiz-top"><span>第 '+(index+1)+' / '+filtered.length+' 词 · '+statusNames[r.status]+'</span><span>本轮 '+quizStats.correct+' / '+quizStats.answered+' 正确</span></div><div class="quiz-word"><h3>'+escape(w.word)+'</h3><p>选择这个单词的正确释义</p><button class="speak-button" data-speak="'+w.id+'" aria-label="朗读 '+escape(w.word)+'">♪</button></div><div class="quiz-options">'+options+'</div>'+feedback+'<div class="quiz-bottom"><span>快捷键 A / B / C / D 选答案</span><button class="primary-button" id="nextQuiz" '+(!quiz.answered?'disabled':'')+'>'+(index===filtered.length-1?'再测一轮 ↻':'下一个词 →')+'</button></div>';
+    syncDock();
   }
   function move(delta) { if(!filtered.length)return;index=Math.max(0,Math.min(filtered.length-1,index+delta));revealed=!store.settings.hide;quiz=null;store.lastId=filtered[index].id;persist();render(); }
   function renderRecall() {
     rememberSession();
     const w=filtered[index];
     if (!recall || recall.wordId!==w.id) recall={wordId:w.id,answer:'',submitted:false,graded:false};
-    const feedback=recall.submitted ? `<div class='quiz-feedback'><h4>对照参考释义</h4><p class='recall-answer'><b>你的回答：</b>${escape(recall.answer)}</p><p><b>参考释义：</b>${escape(w.meaning)}</p>${memoryHTML(w)}${phraseHTML(w)}<p>中文表达可以不同，请按意思自行判断。基本正确不会自动标为已掌握。</p><div class='recall-grading'><button class='status-button mastered' data-recall-grade='correct' ${recall.graded?'disabled':''}>✓ 基本正确</button><button class='status-button review' data-recall-grade='review' ${recall.graded?'disabled':''}>↻ 需要复习</button></div>${recall.graded?`<p role='status'>${recall.grade==='correct'?'已记录：基本正确（自行判断）':'已加入待复习'}</p>`:''}</div>` : '';
+    const feedback=recall.submitted ? `<div class='quiz-feedback'><h4>对照参考释义</h4><p class='recall-answer'><b>你的回答：</b>${escape(recall.answer)}</p><p><b>参考释义：</b>${escape(w.meaning)}</p>${analysisHTML(w)}<p>中文表达可以不同，请按意思自行判断。基本正确不会自动标为已掌握。</p><div class='recall-grading'><button class='status-button mastered' data-recall-grade='correct' ${recall.graded?'disabled':''}>✓ 基本正确</button><button class='status-button review' data-recall-grade='review' ${recall.graded?'disabled':''}>↻ 需要复习</button></div>${recall.graded?`<p role='status'>${recall.grade==='correct'?'已记录：基本正确（自行判断）':'已加入待复习'}</p>`:''}</div>` : '';
     $('recallCard').innerHTML=`<div class='quiz-top'><span>第 ${index+1} / ${filtered.length} 词 · ${statusNames[record(w.id).status]}</span><span>本轮自行判断 ${recallStats.correct} / ${recallStats.answered} 基本正确</span></div><div class='quiz-word'><h3>${escape(w.word)}</h3><p>不看提示，打出这个单词的中文意思</p><button class='speak-button' data-speak='${w.id}' aria-label='朗读 ${escape(w.word)}'>♪</button></div><form id='recallForm'><label class='recall-label' for='recallAnswer'>你的中文释义</label><textarea id='recallAnswer' rows='3' maxlength='500' placeholder='输入你记得的中文意思…' aria-describedby='recallHint' ${recall.submitted?'readonly':''}>${escape(recall.answer)}</textarea><p id='recallHint' class='recall-hint'>先输入，再查看参考释义。可写常用意思，不要求逐字一致；最多500字。Ctrl / ⌘ + Enter 提交。</p><button class='primary-button' type='submit' ${recall.submitted?'disabled':''}>提交并对照释义</button></form>${feedback}<div class='quiz-bottom'><span>对照后请先判断本题，再继续</span><button class='primary-button' id='nextRecall' ${!recall.graded?'disabled':''}>${index===filtered.length-1?'再测一轮 ↻':'下一个词 →'}</button></div>`;
+    syncDock();
   }
   function submitRecall() {
     if (mode!=='recall' || !recall || recall.submitted) return;
     const answer=$('recallAnswer').value.trim();
     if (!answer) { toast('请先输入中文意思，再提交。'); $('recallAnswer').focus(); return; }
     recall.answer=answer.slice(0,500); recall.submitted=true;
+    $('recallAnswer').blur();
     logStudy(recall.wordId); renderRecall();
   }
   document.addEventListener('submit',event=>{if(event.target.id==='recallForm'){event.preventDefault();submitRecall();}});
@@ -161,12 +211,12 @@
     utterance.onerror=()=>toast('朗读暂不可用，请检查设备的英语语音。');speechSynthesis.cancel();speechSynthesis.speak(utterance);
   }
   function reveal(){if(!filtered.length||mode!=='study')return;revealed=true;logStudy(filtered[index].id);renderStudy();}
-  document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode,filtered[index]?.id)));
+  document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>{setMode(b.dataset.mode,filtered[index]?.id);positionQuestion();}));
   $('groupFilter').innerHTML+=[...Array(93)].map((_,i)=>'<option value="'+(i+1)+'">第 '+String(i+1).padStart(2,'0')+' 组 · '+(i===92?9:20)+' 词</option>').join('');
   $('searchInput').addEventListener('input',()=>recompute());$('groupFilter').addEventListener('change',()=>recompute());$('statusFilter').addEventListener('change',()=>recompute());
   $('reviewQuizButton').addEventListener('click',()=>{
     $('searchInput').value=''; $('groupFilter').value='all'; $('statusFilter').value='review';
-    quizStats={answered:0,correct:0}; setMode('quiz');
+    quizStats={answered:0,correct:0}; setMode('quiz'); positionQuestion();
     if (!filtered.length) toast('还没有待复习单词，可以先在词卡中标记。');
   });
   function saveGoal() {
@@ -177,7 +227,7 @@
   $('dailyGoal').addEventListener('change',saveGoal);
   $('reviewRecallButton').addEventListener('click',()=>{
     $('searchInput').value=''; $('groupFilter').value='all'; $('statusFilter').value='review';
-    recallStats={answered:0,correct:0}; setMode('recall');
+    recallStats={answered:0,correct:0}; setMode('recall'); positionQuestion();
     if (!filtered.length) toast('还没有待复习单词，可以先在词卡中标记。');
   });
   $('saveGoalButton').addEventListener('click',saveGoal);
@@ -198,7 +248,7 @@
     if(button.id==='previousWord')move(-1);
     if(button.id==='nextWord')move(1);
     if(button.dataset.option!==undefined&&quiz&&!quiz.answered){quiz.choice=Number(button.dataset.option);quiz.answered=true;quizStats.answered++;const correct=quiz.options[quiz.choice].id===quiz.wordId;if(correct)quizStats.correct++;else{store.records[quiz.wordId]={...record(quiz.wordId),status:'review',updated:new Date().toISOString()};}logStudy(quiz.wordId);persist();renderQuiz();}
-    if(button.id==='nextQuiz'){index=index===filtered.length-1?0:index+1;quiz=null;renderQuiz();}
+    if(button.id==='nextQuiz' || button.id==='nextRecall' || button.id==='mobileNext') nextQuestion();
     if(button.dataset.recallGrade && mode==='recall' && recall?.submitted && !recall.graded){
       const grade=button.dataset.recallGrade;
       if (!['correct','review'].includes(grade)) return;
@@ -206,10 +256,6 @@
       if (grade==='correct') recallStats.correct++;
       else { store.records[recall.wordId]={...record(recall.wordId),status:'review',updated:new Date().toISOString()}; persist(); renderStats(); }
       renderRecall();
-    }
-    if(button.id==='nextRecall' && mode==='recall' && recall?.graded){
-      const nextId=filtered[(index+1)%filtered.length]?.id;
-      recompute(nextId);
     }
   });
   document.addEventListener('keydown',event=>{
@@ -224,7 +270,8 @@
       else if(event.key==='Enter'&&quiz.answered){event.preventDefault();$('nextQuiz').click();}
     }
   });
-  $('helpButton').addEventListener('click',()=>$('helpDialog').showModal());$('topHelpButton').addEventListener('click',()=>$('helpDialog').showModal());$('closeHelp').addEventListener('click',()=>$('helpDialog').close());
+  function openHelp() { $('helpDialog').showModal(); syncDock(); }
+  $('helpButton').addEventListener('click',openHelp);$('topHelpButton').addEventListener('click',openHelp);$('closeHelp').addEventListener('click',()=>$('helpDialog').close());
   $('exportButton').addEventListener('click',()=>{const blob=new Blob([JSON.stringify(store,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='词间学习进度-'+day()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('已导出进度备份。');});
   $('importButton').addEventListener('click',()=>$('importFile').click());
   $('importFile').addEventListener('change',async()=>{
