@@ -30,10 +30,15 @@
     if (session && typeof session === 'object') {
       if (['study','library','quiz','recall','saved'].includes(session.mode)) clean.session.mode = session.mode;
       if (typeof session.query === 'string') clean.session.query = session.query.slice(0,200);
-      if (session.group === 'all' || /^([1-9]|[1-8][0-9]|9[0-3])$/.test(String(session.group))) clean.session.group = String(session.group);
+      if (session.group === 'all' || (/^[1-9][0-9]*$/.test(String(session.group)) && Number(session.group)<=words.length)) clean.session.group = String(session.group);
       if (['all','new','review','mastered','saved'].includes(session.status)) clean.session.status = session.status;
       if (Number.isInteger(session.page) && session.page >= 1 && session.page <= Math.ceil(words.length/24)) clean.session.page = session.page;
       if (Array.isArray(session.order) && session.order.length === words.length && new Set(session.order).size === words.length && session.order.every(id => Number.isInteger(id) && id >= 1 && id <= words.length)) clean.session.order = session.order.slice();
+      // Optional snapshot keeps group boundaries stable when statuses change.
+      if (Array.isArray(session.newGroups) && session.newGroups.length<=words.length && session.newGroups.every(g=>Array.isArray(g) && g.length>0 && g.length<=20)) {
+        const ids=session.newGroups.flat();
+        if (new Set(ids).size===ids.length && ids.every(id=>Number.isInteger(id) && id>=1 && id<=words.length)) clean.session.newGroups=session.newGroups.map(g=>g.slice());
+      }
     }
     // Optional review sessions keep version-1 backups compatible.
     if (value.reviews && typeof value.reviews==='object' && !Array.isArray(value.reviews)) {
@@ -58,6 +63,37 @@
   let quizStats = {answered:0,correct:0}, toastTimer;
   let recall=null, recallStats={answered:0,correct:0};
   let activeReviewKey=null, reviewSession=null;
+  let newGroups=null;
+  function effectiveGroups() {
+    if ($('statusFilter').value!=='new' || !newGroups) return Array.from({length:93},(_,i)=>words.filter(w=>w.group===i+1).map(w=>w.id));
+    const known=new Set(newGroups.flat());
+    const added=words.filter(w=>record(w.id).status==='new' && !known.has(w.id)).map(w=>w.id);
+    // Append newly reset words; never repack existing groups implicitly.
+    return newGroups.concat(Array.from({length:Math.ceil(added.length/20)},(_,i)=>added.slice(i*20,i*20+20)));
+  }
+  function groupNumber(w) {
+    return $('statusFilter').value==='new' && newGroups ? effectiveGroups().findIndex(g=>g.includes(w.id))+1 : w.group;
+  }
+  function inScope(w,query=$('searchInput').value.trim().toLowerCase()) {
+    const r=record(w.id), status=$('statusFilter').value;
+    return (!query || [w.word,w.meaning,w.phrase,w.phraseZh].some(t=>t.toLowerCase().includes(query))) && (status==='all' || (status==='saved'?r.saved:r.status===status)) && (mode!=='saved' || r.saved);
+  }
+  function updateGroups() {
+    const selected=$('groupFilter').value || 'all', groups=effectiveGroups();
+    $('groupFilter').innerHTML='<option value="all">全部 '+groups.length+' 组</option>'+groups.map((g,i)=>'<option value="'+(i+1)+'">第 '+String(i+1).padStart(2,'0')+' 组 · '+g.filter(id=>inScope(words[id-1],'')).length+' 词</option>').join('');
+    $('groupFilter').value=selected==='all' || Number(selected)<=groups.length?selected:'all';
+  }
+  function groupedQuiz() { return mode==='quiz' && !reviewSession && $('groupFilter').value!=='all'; }
+  function nextQuizGroup() {
+    const groups=effectiveGroups();
+    for (let i=Number($('groupFilter').value);i<groups.length;i++) if (groups[i].some(id=>inScope(words[id-1]))) return String(i+1);
+    return null;
+  }
+  function quizNextLabel() {
+    if (index!==filtered.length-1) return '下一个词 →';
+    if (!groupedQuiz()) return '再测一轮 ↻';
+    return quiz?.answered && !nextQuizGroup() ? '已完成当前范围的全部分组' : '测试下一组';
+  }
   function checkpointReview() {
     if (!activeReviewKey || !reviewSession) return;
     Object.assign(reviewSession,{quiz,recall,quizStats:{...quizStats},recallStats:{...recallStats},revealed,page:libraryPage});
@@ -104,8 +140,8 @@
     const w=filtered[index];
     $('dockFeedback').textContent=isQuiz ? (quiz?.answered ? (quiz.options[quiz.choice].id===w.id ? '✓ 回想正确' : '↻ 答错了，已加入待复习')+' · '+w.meaning : '先选择一个答案') : (recall.graded ? (recall.grade==='correct' ? '✓ 基本正确（自行判断）' : '↻ 已加入待复习') : '参考释义：'+w.meaning);
     $('dockGrade').hidden=isQuiz || recall.graded;
-    $('mobileNext').disabled=!answered;
-    $('mobileNext').textContent=index===filtered.length-1 ? '再测一轮 ↻' : '下一个词 →';
+    $('mobileNext').disabled=!answered || (isQuiz && groupedQuiz() && index===filtered.length-1 && !nextQuizGroup());
+    $('mobileNext').textContent=isQuiz ? quizNextLabel() : (index===filtered.length-1 ? '再测一轮 ↻' : '下一个词 →');
     measureDock();
   }
   function queueDock() { cancelAnimationFrame(dockFrame); dockFrame=requestAnimationFrame(syncDock); }
@@ -123,7 +159,14 @@
       if ((mode==='quiz' && quiz?.answered) || (mode==='recall' && recall?.graded)) advanceReview();
       return;
     }
-    if (mode==='quiz' && quiz?.answered) { index=index===filtered.length-1?0:index+1; quiz=null; renderQuiz(); positionQuestion(); }
+    if (mode==='quiz' && quiz?.answered) {
+      if (groupedQuiz() && index===filtered.length-1) {
+        const next=nextQuizGroup();
+        if (!next) { toast('已完成当前范围的全部分组。'); return; }
+        $('groupFilter').value=next; quizStats={answered:0,correct:0}; recompute();
+      } else { index=index===filtered.length-1?0:index+1; quiz=null; renderQuiz(); }
+      positionQuestion();
+    }
     else if (mode==='recall' && recall?.graded) { const nextId=filtered[(index+1)%filtered.length]?.id; recompute(nextId); positionQuestion(); }
   }
   document.addEventListener('focusin',syncDock);
@@ -144,13 +187,16 @@
     checkpointReview();
     if (filtered[index]) store.lastId=filtered[index].id;
     store.session={mode,query:$('searchInput').value.slice(0,200),group:$('groupFilter').value,status:$('statusFilter').value,page:libraryPage,order:order.slice()};
+    if (newGroups) store.session.newGroups=newGroups.map(g=>g.slice());
     persist();
   }
   function restoreSession() {
     activeReviewKey=null; reviewSession=null; quiz=null; recall=null;
     const session=store.session, lastId=store.lastId;
     order=session.order ? session.order.slice() : words.map(w=>w.id);
-    $('searchInput').value=session.query; $('groupFilter').value=session.group; $('statusFilter').value=session.status;
+    newGroups=session.newGroups ? session.newGroups.map(g=>g.slice()) : null;
+    $('searchInput').value=session.query; $('statusFilter').value=session.status; updateGroups(); $('groupFilter').value=session.group;
+    if (!$('groupFilter').value) $('groupFilter').value='all';
     $('hideMeanings').checked=store.settings.hide; $('dailyGoal').value=store.settings.goal;
     setMode(session.mode,lastId);
     libraryPage=session.page;
@@ -166,12 +212,12 @@
   function recompute(keepId) {
     checkpointReview();
     activeReviewKey=null; reviewSession=null;
+    updateGroups();
     const query=$('searchInput').value.trim().toLowerCase(), group=$('groupFilter').value, status=$('statusFilter').value;
-    const rank=new Map(order.map((id,i)=>[id,i]));
-    filtered=words.filter(w => {
-      const r=record(w.id);
-      return (!query || [w.word,w.meaning,w.phrase,w.phraseZh].some(t=>t.toLowerCase().includes(query))) && (group==='all' || w.group===Number(group)) && (status==='all' || (status==='saved'?r.saved:r.status===status)) && (mode!=='saved' || r.saved);
-    }).sort((a,b)=>rank.get(a.id)-rank.get(b.id));
+    const groups=effectiveGroups(), groupedOrder=status==='new' && newGroups;
+    const rank=new Map((groupedOrder?groups.flat():order).map((id,i)=>[id,i]));
+    const members=group==='all'?null:new Set(groups[Number(group)-1] || []);
+    filtered=words.filter(w=>inScope(w,query) && (!members || members.has(w.id))).sort((a,b)=>rank.get(a.id)-rank.get(b.id));
     if (status==='review') {
       activeReviewKey=JSON.stringify([mode,group,query]);
       const valid=new Set(filtered.map(w=>w.id));
@@ -220,6 +266,7 @@
     }
   }
   function render() {
+    updateGroups();
     renderStats(); const empty=filtered.length===0;
     $('studyPanel').hidden=empty || mode!=='study'; $('libraryPanel').hidden=empty || !['library','saved'].includes(mode); $('quizPanel').hidden=empty || mode!=='quiz'; $('emptyPanel').hidden=!empty;
     $('recallPanel').hidden=empty || mode!=='recall';
@@ -238,31 +285,70 @@
     const w=filtered[index],r=record(w.id); store.lastId=w.id;
     const contents=revealed?'<p class="meaning">'+escape(w.meaning)+'</p>':'';
     const body=revealed?'<div class="card-body">'+memoryHTML(w)+phraseHTML(w)+'<details class="dictionary-detail"><summary>展开词典参考义</summary><p>'+escape(w.dictionary)+'</p></details></div>':'<div class="reveal-panel"><p>这个词是什么意思？<br>先主动回想，再看看你的答案。</p><button class="primary-button" id="revealButton">揭晓释义与记忆法 <span>↗</span></button></div>';
-    $('flashcard').innerHTML='<div class="card-top"><div class="card-meta"><span><span class="group-tag">GROUP '+String(w.group).padStart(2,'0')+'</span> &nbsp; #'+String(w.id).padStart(4,'0')+'</span>'+star(w)+'</div><div class="word-line"><h3>'+escape(w.word)+'</h3><button class="speak-button" data-speak="'+w.id+'" aria-label="朗读 '+escape(w.word)+'">♪</button></div><div class="phonetic">'+escape('常用释义 · 原词表顺序')+'</div>'+contents+'</div>'+body+'<div class="card-actions"><button class="status-button review" data-status="review" aria-pressed="'+(r.status==='review')+'">↻ 待复习</button><button class="status-button mastered" data-status="mastered" aria-pressed="'+(r.status==='mastered')+'">✓ 已掌握</button>'+(r.status!=='new'?'<button class="status-button" data-status="new" title="重置为未学习">重置</button>':'')+'<div class="card-navigation"><button class="arrow-button" id="previousWord" aria-label="上一个单词" '+(index===0?'disabled':'')+'>←</button><span>'+String(index+1).padStart(2,'0')+' / '+filtered.length+'</span><button class="arrow-button" id="nextWord" aria-label="下一个单词" '+(index===filtered.length-1?'disabled':'')+'>→</button></div></div>';
+    $('flashcard').innerHTML='<div class="card-top"><div class="card-meta"><span><span class="group-tag">GROUP '+String(groupNumber(w)).padStart(2,'0')+'</span> &nbsp; #'+String(w.id).padStart(4,'0')+'</span>'+star(w)+'</div><div class="word-line"><h3>'+escape(w.word)+'</h3><button class="speak-button" data-speak="'+w.id+'" aria-label="朗读 '+escape(w.word)+'">♪</button></div><div class="phonetic">'+escape('常用释义 · 原词表顺序')+'</div>'+contents+'</div>'+body+'<div class="card-actions"><button class="status-button review" data-status="review" aria-pressed="'+(r.status==='review')+'">↻ 待复习</button><button class="status-button mastered" data-status="mastered" aria-pressed="'+(r.status==='mastered')+'">✓ 已掌握</button>'+(r.status!=='new'?'<button class="status-button" data-status="new" title="重置为未学习">重置</button>':'')+'<div class="card-navigation"><button class="arrow-button" id="previousWord" aria-label="上一个单词" '+(index===0?'disabled':'')+'>←</button><span>'+String(index+1).padStart(2,'0')+' / '+filtered.length+'</span><button class="arrow-button" id="nextWord" aria-label="下一个单词" '+(index===filtered.length-1?'disabled':'')+'>→</button></div></div>';
   }
   function renderLibrary() {
     const size=24,total=Math.ceil(filtered.length/size);libraryPage=Math.max(1,Math.min(libraryPage,total));
     rememberSession();
     $('wordGrid').innerHTML=filtered.slice((libraryPage-1)*size,libraryPage*size).map(w=>{
-      const r=record(w.id);return '<article class="mini-card"><div class="mini-card-head"><span>'+String(w.id).padStart(4,'0')+' · 第'+w.group+'组</span>'+star(w)+'</div><button class="mini-word" data-open="'+w.id+'">'+escape(w.word)+'</button><div class="mini-meaning">'+(store.settings.hide?'先回想，再打开词卡':escape(w.meaning))+'</div>'+(store.settings.hide?'':'<p class="mini-phrase">'+escape(w.phrase)+'</p>')+'<div class="mini-status"><span class="status-label '+r.status+'">'+statusNames[r.status]+'</span><button data-open="'+w.id+'">打开词卡 ↗</button></div></article>';
+      const r=record(w.id);return '<article class="mini-card"><div class="mini-card-head"><span>'+String(w.id).padStart(4,'0')+' · 第'+groupNumber(w)+'组</span>'+star(w)+'</div><button class="mini-word" data-open="'+w.id+'">'+escape(w.word)+'</button><div class="mini-meaning">'+(store.settings.hide?'先回想，再打开词卡':escape(w.meaning))+'</div>'+(store.settings.hide?'':'<p class="mini-phrase">'+escape(w.phrase)+'</p>')+'<div class="mini-status"><span class="status-label '+r.status+'">'+statusNames[r.status]+'</span><button data-open="'+w.id+'">打开词卡 ↗</button></div></article>';
     }).join('');$('pageInfo').textContent=libraryPage+' / '+total+' 页';$('prevPage').disabled=libraryPage===1;$('nextPage').disabled=libraryPage===total;
   }
   function shuffled(list) { const a=list.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+  // All displayed meanings still come from the bundled dictionary, never generated.
+  const meaningParts = value => (value.match(/[\u3400-\u9fff]+/g) || []).filter(s=>s.length>1);
+  const lexicon=words.map(w=>({
+    ...w, spelling:w.word.toLowerCase().replace(/[^a-z]/g,''),
+    senses:meaningParts(w.meaning+'；'+w.dictionary),
+    parts:new Set((w.dictionary.match(/(?:^|\n)(?:n|a|adj|ad|adv|v|vt|vi)\./g) || []).map(s=>s.trim().replace(/^(vt|vi)/,'v').replace(/^adj/,'a').replace(/^adv/,'ad')))
+  }));
+  function meaningsOverlap(a,b) {
+    return a.senses.some(x=>b.senses.some(y=>x.includes(y) || y.includes(x)));
+  }
+  // Optimal-string-alignment distance also counts adjacent transposition as one edit.
+  function spellingDistance(a,b) {
+    const rows=Array.from({length:a.length+1},()=>Array(b.length+1).fill(0));
+    for(let i=0;i<=a.length;i++) rows[i][0]=i;
+    for(let j=0;j<=b.length;j++) rows[0][j]=j;
+    for(let i=1;i<=a.length;i++) for(let j=1;j<=b.length;j++) {
+      rows[i][j]=Math.min(rows[i-1][j]+1,rows[i][j-1]+1,rows[i-1][j-1]+(a[i-1]===b[j-1]?0:1));
+      if(i>1 && j>1 && a[i-1]===b[j-2] && a[i-2]===b[j-1]) rows[i][j]=Math.min(rows[i][j],rows[i-2][j-2]+1);
+    }
+    return rows[a.length][b.length];
+  }
+  const distractorCache=new Map();
+  function rankedDistractors(w) {
+    if(distractorCache.has(w.id)) return distractorCache.get(w.id);
+    const target=lexicon[w.id-1];
+    const ranked=lexicon.filter(c=>c.id!==w.id && c.spelling!==target.spelling && !meaningsOverlap(target,c)).map(c=>{
+      const a=target.spelling,b=c.spelling,d=spellingDistance(a,b),ratio=d/Math.max(a.length,b.length);
+      let prefix=0,suffix=0;
+      while(prefix<Math.min(a.length,b.length) && a[prefix]===b[prefix]) prefix++;
+      while(suffix<Math.min(a.length,b.length) && a[a.length-1-suffix]===b[b.length-1-suffix]) suffix++;
+      const samePart=[...target.parts].some(p=>c.parts.has(p));
+      // A common affix alone is insufficient: every close tier requires few edits.
+      const tier=d<=1?0:d<=2 && ratio<=.34?1:d<=3 && ratio<=.4 && Math.max(prefix,suffix)>=3?2:d<=3 && ratio<=.6?3:4;
+      return {candidate:c,tier,score:ratio-(samePart ? .025 : 0)};
+    }).sort((a,b)=>a.tier-b.tier || a.score-b.score);
+    if (distractorCache.size>=32) distractorCache.delete(distractorCache.keys().next().value);
+    distractorCache.set(w.id,ranked); return ranked;
+  }
   function newQuiz() {
-    const w=filtered[index], seen=new Set([w.meaning]);
-    const choices=[{id:w.id,meaning:w.meaning}];
-    const tokens = value => value.split(/[；，]/).map(part=>part.trim()).filter(part=>part.length>1);
-    const correctTokens = tokens(w.meaning);
-    const isSimilar = candidate => tokens(candidate.meaning).some(a=>correctTokens.some(b=>a.includes(b)||b.includes(a)));
-    for(const candidate of shuffled(words.filter(c=>c.id!==w.id && !isSimilar(c)))){if(!seen.has(candidate.meaning)){choices.push({id:candidate.id,meaning:candidate.meaning});seen.add(candidate.meaning);if(choices.length===4)break;}}
-    quiz={wordId:w.id,options:shuffled(choices),answered:false,choice:null};
+    const w=filtered[index], selected=[lexicon[w.id-1]];
+    // Randomize ties without letting unrelated words outrank close spellings.
+    const ranked=shuffled(rankedDistractors(w)).sort((a,b)=>a.tier-b.tier || a.score-b.score);
+    for(const {candidate} of ranked) {
+      if(selected.some(c=>c.meaning===candidate.meaning || meaningsOverlap(c,candidate))) continue;
+      selected.push(candidate); if(selected.length===4) break;
+    }
+    quiz={wordId:w.id,options:shuffled(selected.map(c=>({id:c.id,meaning:c.meaning}))),answered:false,choice:null};
   }
   function renderQuiz() {
     if(!quiz) newQuiz();
     rememberSession();const w=words.find(w=>w.id===quiz.wordId),r=record(w.id);
     const options=quiz.options.map((o,i)=>{let cls='';if(quiz.answered){if(o.id===w.id)cls=' correct';else if(i===quiz.choice)cls=' wrong';}return '<button class="quiz-option'+cls+'" data-option="'+i+'" '+(quiz.answered?'disabled':'')+'><span>'+String.fromCharCode(65+i)+'</span><span>'+escape(o.meaning)+'</span></button>';}).join('');
     const feedback=quiz.answered?'<div class="quiz-feedback"><h4>'+(quiz.options[quiz.choice].id===w.id?'✓ 回想正确':'再看一遍，它会更牢')+'</h4><p>正确释义：'+escape(w.meaning)+'</p>'+analysisHTML(w)+'<button class="status-button review" data-quiz-status="review">↻ 加入待复习</button> <button class="status-button mastered" data-quiz-status="mastered">✓ 标为已掌握</button></div>':'';
-    $('quizCard').innerHTML='<div class="quiz-top"><span>第 '+(index+1)+' / '+filtered.length+' 词 · '+statusNames[r.status]+'</span><span>本轮 '+quizStats.correct+' / '+quizStats.answered+' 正确</span></div><div class="quiz-word"><h3>'+escape(w.word)+'</h3><p>选择这个单词的正确释义</p><button class="speak-button" data-speak="'+w.id+'" aria-label="朗读 '+escape(w.word)+'">♪</button></div><div class="quiz-options">'+options+'</div>'+feedback+'<div class="quiz-bottom"><span>快捷键 A / B / C / D 选答案</span><button class="primary-button" id="nextQuiz" '+(!quiz.answered?'disabled':'')+'>'+(index===filtered.length-1?'再测一轮 ↻':'下一个词 →')+'</button></div>';
+    $('quizCard').innerHTML='<div class="quiz-top"><span>第 '+(index+1)+' / '+filtered.length+' 词 · '+statusNames[r.status]+'</span><span>本轮 '+quizStats.correct+' / '+quizStats.answered+' 正确</span></div><div class="quiz-word"><h3>'+escape(w.word)+'</h3><p>选择这个单词的正确释义</p><button class="speak-button" data-speak="'+w.id+'" aria-label="朗读 '+escape(w.word)+'">♪</button></div><div class="quiz-options">'+options+'</div>'+feedback+'<div class="quiz-bottom"><span>快捷键 A / B / C / D 选答案</span><button class="primary-button" id="nextQuiz" '+(!quiz.answered || (groupedQuiz() && index===filtered.length-1 && !nextQuizGroup())?'disabled':'')+'>'+quizNextLabel()+'</button></div>';
     syncDock();
   }
   function move(delta) { if(!filtered.length)return;index=Math.max(0,Math.min(filtered.length-1,index+delta));if(reviewSession){reviewSession.currentId=filtered[index].id;reviewSession.position=index;reviewSession.nextId=null;}revealed=!store.settings.hide;quiz=null;store.lastId=filtered[index].id;persist();render(); }
@@ -313,7 +399,6 @@
   }
   function reveal(){if(!filtered.length||mode!=='study')return;revealed=true;logStudy(filtered[index].id);renderStudy();}
   document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>{setMode(b.dataset.mode,filtered[index]?.id);positionQuestion();}));
-  $('groupFilter').innerHTML+=[...Array(93)].map((_,i)=>'<option value="'+(i+1)+'">第 '+String(i+1).padStart(2,'0')+' 组 · '+(i===92?9:20)+' 词</option>').join('');
   $('searchInput').addEventListener('input',()=>recompute());$('groupFilter').addEventListener('change',()=>recompute());$('statusFilter').addEventListener('change',()=>recompute());
   $('reviewQuizButton').addEventListener('click',()=>{
     $('searchInput').value=''; $('groupFilter').value='all'; $('statusFilter').value='review';
@@ -336,6 +421,12 @@
   $('hideMeanings').checked=store.settings.hide;
   $('hideMeanings').addEventListener('change',()=>{store.settings.hide=$('hideMeanings').checked;revealed=!store.settings.hide;persist();render();});
   $('shuffleButton').addEventListener('click',()=>{
+    if ($('statusFilter').value==='new') {
+      const ids=shuffled(words.filter(w=>record(w.id).status==='new').map(w=>w.id));
+      newGroups=Array.from({length:Math.ceil(ids.length/20)},(_,i)=>ids.slice(i*20,i*20+20));
+      updateGroups(); $('groupFilter').value=ids.length?'1':'all';
+      quizStats={answered:0,correct:0}; recompute(); toast('已将全部未学习单词随机排列并按每组 20 词重新分组。'); return;
+    }
     order=shuffled(words.map(w=>w.id));
     if (reviewSession) {
       reviewSession.queue=shuffled(reviewSession.queue);
